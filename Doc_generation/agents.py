@@ -80,7 +80,10 @@ def clean_llm_response(text: str) -> str:
             if content.lower().startswith("json"):
                 content = content[4:].strip()
             return content
+    elif text.startswith("'''") and text.endswith("'''"):
+        return text.strip("'''").strip()
     return text
+
 
 # === AGENTS ===
 def user_input_agent(state):
@@ -163,10 +166,13 @@ def slide_outline_agent(state):
     return {"slide_outline": outline_json}
 
 def generator_agent(state):
+    import os, re, json
+
     outline = state.get("slide_outline", {})
     user_input = state.get("user_input", "")
-    project_info = state.get("project_info","")
+    project_info = state.get("project_info", "")
     persona_summary = retrieve_persona_summary(user_input)
+
     search_prompt = f"""You are a senior business strategist and analyst.
 
 Given:
@@ -175,168 +181,199 @@ Given:
 
 Perform a deep-dive analysis with the following objectives:
 
----
+1. Understand the Offering
+2. Business Need Analysis
+3. Market Contextualization
+4. Sales Positioning Insight
 
-1. **Understand the Offering**
-   - Briefly summarize what this project is about in business terms.
-   - Identify the core technology/service/product being offered.
-
-2. **Business Need Analysis**
-   - Identify the key reasons why a mid-to-large enterprise might require this solution.
-   - List possible pain points, inefficiencies, or strategic objectives this solution addresses.
-   - Highlight any specific departments, industries, or operational areas where this could bring significant impact.
-
-3. **Market Contextualization**
-   - Search and cite any recent news, industry trends, regulatory changes, or market shifts that support the need for this solution.
-   - Mention examples of companies, deals, or industry movements that reinforce the business value of this offering.
-
-4. **Sales Positioning Insight**
-   - Construct a compelling value proposition using the identified needs and market signals.
-   - Include persuasive language and argumentation that can be used in a high-stakes enterprise pitch.
-   - Frame this in a format suitable to feed into a slide deck or a pitch presentation.
-
-Be concise but insightful. Use industry language where appropriate.
-
+Be concise but insightful. Cite any relevant examples. Return findings suitable for slide content.
 """
-    search_results = search_assistant(user_input,search_prompt)
+    search_results = search_assistant(user_input, search_prompt)
     generated_slides = []
+    slides_structured_json = []
 
     os.makedirs("generated_slides", exist_ok=True)
 
     for section, slides in outline.items():
         for slide_title in slides:
             prompt = f"""
-You are a corporate communication expert and technical content writer.
-Generate the content for a PowerPoint slide titled "{slide_title}" in the section "{section}".
+You are a corporate communication expert and technical content strategist.
+Your task is to generate well-structured JSON output for a PowerPoint slide.
 
-Project Context: {user_input}
-Recent market research about the topic and the company : {search_results}
-Additional Persona Insight: {persona_summary}
+---
 
-Instructions:
-- Limit content to what would appear on a single slide.
-- Include bullet points, stats, or visuals where appropriate.
-- Mention placeholder text for diagrams or images if needed (e.g., [Image Placeholder: System Diagram]).
+### Slide Example Format (JSON):
+{{
+  "slide_title": "AI-Powered Support Overview",
+  "section": "Solution Overview",
+  "slide_type": "Solution Overview",
+  "slide_content": "- 65% reduction in human support dependency\\n- 40% faster ticket resolution\\n- Multilingual query handling\\n[Image Placeholder: Support System Diagram]"
+}}
+
+---
+
+### Inputs:
+
+- **Slide Title**: "{slide_title}"
+- **Section**: "{section}"
+- **Project Context**: "{user_input}"
+- **Recent Market Research**: "{search_results}"
+- **Persona Insight**: "{persona_summary}"
+
+---
+
+### Instructions:
+- Limit content to one slide.
+- Use bullet points, stats, and visuals where appropriate.
+- Mention `[Image Placeholder: ...]` for diagrams.
 - Use professional, formal language.
+- Slide type must be one of: "Title", "Problem Statement", "Solution Overview", "Insights", or a custom type if needed.
 
-Output:
-Slide Title: {slide_title}
-Slide Content:
-Slide Type[from these Title,Problem Statement,Solution Overview, Insights if any other include that too]:  
+Respond ONLY with the final JSON structure.
 """
-            content = call_llm(prompt)
 
-            # === Sanitize filename ===
+            response = call_llm(prompt)
+            cleaned_response = clean_llm_response(response)
+
+            try:
+                slide_json = json.loads(cleaned_response)
+            except json.JSONDecodeError:
+                print(f"⚠️ Error parsing slide: {slide_title}")
+                continue
+
+            # Save individual JSON slide
             safe_title = re.sub(r'[\\/*?:"<>|]', "_", slide_title)
-            slide_file = f"generated_slides/{safe_title.replace(' ', '_').lower()}.txt"
+            slide_file_path = f"generated_slides/{safe_title.replace(' ', '_').lower()}.json"
+            with open(slide_file_path, "w", encoding="utf-8") as f:
+                json.dump(slide_json, f, indent=4)
 
-            with open(slide_file, "w", encoding="utf-8") as f:
-                f.write(content.strip())
+            slides_structured_json.append(slide_json)
 
-            generated_slides.append(f"# {slide_title}\n{content.strip()}\n")
+    # Save all slides to a complete file
+    with open("generated_slides/complete_slides.json", "w", encoding="utf-8") as f:
+        json.dump(slides_structured_json, f, indent=4)
 
-    return {"generated_slides": "\n".join(generated_slides)}
+    return {"generated_slides_json": slides_structured_json}
+
 
 def reviewer_agent(state):
-    slides_text = state["generated_slides"]
-    lines = slides_text.splitlines()
-    slide_chunks = []
-    current_chunk = []
-
-    for line in lines:
-        if line.startswith("# "):
-            if current_chunk:
-                slide_chunks.append("\n".join(current_chunk))
-            current_chunk = [line]
-        else:
-            current_chunk.append(line)
-    if current_chunk:
-        slide_chunks.append("\n".join(current_chunk))
+    slides_json = state.get("generated_slides_json", [])
 
     reviewed_slides = []
-    for chunk in slide_chunks:
-        if not chunk.strip():
-            continue
-        try:
-            title_line, content = chunk.strip().split("\n", 1)
-        except ValueError:
-            continue
-        title = title_line.lstrip("# ").strip()
+    for slide in slides_json:
+        title = slide["slide_title"]
+        content = slide["slide_content"]
+        section = slide.get("section", "")
+        slide_type = slide.get("slide_type", "")
+
         prompt = f"""
-You are an enterprise-level presentation reviewer. Refine the following slide content for accuracy, structure, and impact.
+You are an enterprise-level presentation reviewer and editor.
 
 Slide Title: {title}
-Slide Content:
+Section: {section}
+Slide Type: {slide_type}
+Original Slide Content:
 {content}
 
 Instructions:
-- Improve clarity, formatting, and tone.
-- Make it suitable for a business audience.
-- Return only improved slide content.
+- Improve clarity, tone, and formatting.
+- Make it concise and compelling for a business presentation.
+- Maintain structure: keep bullet points, stats, and visual placeholders intact.
+- Return only the revised slide content (no explanations).
 """
-        improved = call_llm(prompt)
-        reviewed_slides.append(f"# {title}\n{improved.strip()}\n")
 
-    return {"final_output": "\n".join(reviewed_slides)}
+        improved_content = call_llm(prompt).strip()
+
+        reviewed_slides.append({
+            "slide_title": title,
+            "section": section,
+            "slide_type": slide_type,
+            "slide_content": improved_content
+        })
+
+    # Save reviewed version
+    os.makedirs("reviewed_slides", exist_ok=True)
+    with open("reviewed_slides/final_output.json", "w", encoding="utf-8") as f:
+        json.dump(reviewed_slides, f, indent=4)
+
+    # Also format into markdown for compatibility if needed later
+    markdown_output = "\n\n".join(
+        f"# {slide['slide_title']}\n{slide['slide_content']}" for slide in reviewed_slides
+    )
+
+    return {
+        "final_output": markdown_output,
+        "reviewed_slides_json": reviewed_slides
+    }
+
 
 def chain_agent(state):
-    prompt = f"""
-Evaluate the final presentation:
-- Project: {state['user_input']}
-- Total Slides: {len(state.get('final_output', '').split('# ')) - 1}
-- Assess quality, consistency, slide tone, and structure.
+    reviewed_slides = state.get("reviewed_slides_json", [])
+    total_slides = len(reviewed_slides)
+    project_title = state.get("user_input", "")
 
-Provide final feedback and highlight any improvement suggestions.
+    compiled_text = "\n\n".join(
+        f"Slide Title: {slide['slide_title']}\nSection: {slide['section']}\nSlide Type: {slide['slide_type']}\nContent:\n{slide['slide_content']}"
+        for slide in reviewed_slides
+    )
+
+    prompt = f"""
+You are a senior content auditor reviewing a final business proposal presentation.
+
+Project Title: {project_title}
+Total Slides: {total_slides}
+
+Slides:
+{compiled_text}
+
+Instructions:
+- Evaluate overall tone, structure, consistency, and professional quality.
+- Identify strengths and suggest areas for improvement.
+- Return final comments as a structured executive summary.
 """
-    result = call_llm(prompt)
-    return {"process_assessment": result}
+
+    feedback = call_llm(prompt).strip()
+    return {"process_assessment": feedback}
+
 
 def ppt_generation_pipeline(user_input, project_info):
-    state = {"user_input": user_input, "project_info": project_info}
+    state = {
+        "user_input": user_input,
+        "project_info": project_info
+    }
+
+    # Run the agent pipeline
     state.update(slide_outline_agent(state))
     state.update(generator_agent(state))
     state.update(reviewer_agent(state))
     state.update(chain_agent(state))
 
-    final_md = state["final_output"]
-    lines = final_md.splitlines()
-    slide_chunks = []
-    current_chunk = []
-
-    for line in lines:
-        if line.startswith("# "):  # New slide
-            if current_chunk:
-                slide_chunks.append("\n".join(current_chunk))
-            current_chunk = [line]
-        else:
-            current_chunk.append(line)
-    if current_chunk:
-        slide_chunks.append("\n".join(current_chunk))
+    reviewed_slides_json = state.get("reviewed_slides_json", [])
 
     slides_structured = []
-    for idx, chunk in enumerate(slide_chunks, start=1):
-        if not chunk.strip():
-            continue
-        try:
-            title_line, content = chunk.strip().split("\n", 1)
-            title = title_line.lstrip("# ").strip()
-            slides_structured.append({
-                "slide_number": idx,
-                "slide_title": title,
-                "slide_content": content.strip()
-            })
-        except ValueError:
-            # If content is missing or malformed
-            slides_structured.append({
-                "slide_number": idx,
-                "slide_title": title_line.lstrip("# ").strip(),
-                "slide_content": ""
-            })
+    for idx, slide in enumerate(reviewed_slides_json, start=1):
+        slides_structured.append({
+            "slide_number": idx,
+            "slide_title": slide.get("slide_title", ""),
+            "section": slide.get("section", ""),
+            "slide_type": slide.get("slide_type", ""),
+            "slide_content": slide.get("slide_content", "")
+        })
+
+    # Generate Markdown fallback for compatibility/use in manual review
+    markdown_output = "\n\n".join(
+        f"# {slide['slide_title']}\n{slide['slide_content']}" for slide in reviewed_slides_json
+    )
+
+    # Save the final structured JSON to disk (optional for record-keeping)
+    os.makedirs("final_output", exist_ok=True)
+    with open("final_output/structured_slides.json", "w", encoding="utf-8") as f:
+        json.dump(slides_structured, f, indent=4)
 
     return {
         "slides": slides_structured,
         "total_slides": len(slides_structured),
-        "markdown": final_md.strip(),
+        "markdown": markdown_output.strip(),
         "status": "complete",
         "assessment": state["process_assessment"]
     }
