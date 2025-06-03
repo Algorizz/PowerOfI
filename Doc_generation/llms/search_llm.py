@@ -36,15 +36,15 @@ class PerplexityResearchAgent:
             )
             return response.choices[0].message.content
 
-if __name__ == "__main__":
-    api_key = "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"  # your Perplexity key
-    agent = PerplexityResearchAgent(api_key)
+# if __name__ == "__main__":
+#     api_key = "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"  # your Perplexity key
+#     agent = PerplexityResearchAgent(api_key)
 
-    query = input("Give your qn:-")
+#     query = input("Give your qn:-")
     
-    print("📡 Running non-streamed research...\n")
-    result = agent.run(query)
-    print("🔍 Summary:\n", result)
+#     print("📡 Running non-streamed research...\n")
+#     result = agent.run(query)
+#     print("🔍 Summary:\n", result)
 
-    print("\n📡 Running streamed response...\n")
-    agent.run(query, stream=True)
+#     print("\n📡 Running streamed response...\n")
+#     agent.run(query, stream=True)
