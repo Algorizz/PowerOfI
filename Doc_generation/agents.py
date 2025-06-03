@@ -2,12 +2,13 @@ import os
 import json
 import re
 from langchain_openai import AzureOpenAIEmbeddings
-from azure_llm import call_llm, client
+from llms.azure_llm import call_llm
 from qdrant_client import QdrantClient
 from openai import AzureOpenAI
 from langchain.embeddings.base import Embeddings
 from datetime import datetime
 from openai import OpenAI
+from llms.search_llm import PerplexityResearchAgent
 
 # === ENVIRONMENT SETUP ===
 os.environ["AZURE_OPENAI_API_KEY"] = "b46942d9305c42d78df6078a465419ae"
@@ -16,10 +17,7 @@ os.environ["QDRANT_API_KEY"] = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3M
 os.environ["PERPLEXITY_API_KEY"] = "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"
 
 # Initializing Perplexity-compatible client
-client = OpenAI(
-    api_key=os.getenv("PERPLEXITY_API_KEY"),  # Store in .env or config.py
-    base_url="https://api.perplexity.ai"
-)
+agent = PerplexityResearchAgent(os.getenv("PERPLEXITY_API_KEY"))
 
 # === Azure Embedding for Retrieval ===
 class AzureOpenAIEmbeddings(Embeddings):
@@ -89,45 +87,84 @@ def clean_llm_response(text: str) -> str:
 def user_input_agent(state):
     return {"user_input": state.get("user_input", "")}
 
-def search_assistant(user_input:str,prompt:str) -> str:
-    # === Step 1: Save input to Markdown ===
+# def search_assistant(user_input: str, prompt: str) -> str:
+#     """
+#     Uses PerplexityResearchAgent to search the web, saves the query and result in a Markdown file,
+#     and returns the response content.
+#     """
+#     # === Step 1: Prepare storage path ===
+#     os.makedirs("search_info", exist_ok=True)
+#     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+#     safe_filename = user_input.replace(" ", "_").lower()
+#     file_path = os.path.join("search_info", f"{safe_filename}_{timestamp}.md")
+
+#     # === Step 2: Save the query ===
+#     with open(file_path, "w", encoding="utf-8") as f:
+#         f.write(f"# Project: {user_input}\n\n")
+#         f.write(f"## Search Query:\n{prompt}\n\n")
+
+#     # === Step 3: Make API Call ===
+#     try:
+#         content = agent.run(prompt)
+#     except Exception as e:
+#         content = f"❌ Error while searching: {e}"
+
+#     # === Step 4: Save result ===
+#     with open(file_path, "a", encoding="utf-8") as f:
+#         f.write(f"## Perplexity Response:\n{content}\n")
+
+#     return content
+
+def search_assistant(user_input: str, prompt: str) -> str:
+    """
+    Uses PerplexityResearchAgent to search the web, saves the query and result in a Markdown file,
+    and returns the response content.
+    """
+    # === Step 1: Prepare storage path ===
     os.makedirs("search_info", exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    file_path = os.path.join("search_info", f"{user_input}_{timestamp}.md")
     
-    with open(file_path, "w", encoding="utf-8") as f:
-        f.write(f"# Project: {user_input}\n\n")
-        f.write(f"## Search Query:\n{prompt}\n\n")
+    # Improved filename sanitization
+    safe_filename = "".join(c for c in user_input if c.isalnum() or c in (' ', '-', '_')).rstrip()
+    safe_filename = safe_filename.replace(" ", "_").lower()[:50]  # Limit length
+    
+    # Ensure .md extension is properly added
+    file_path = os.path.join("search_info", f"{safe_filename}_{timestamp}.md")
+    
+    print(f"Creating file: {file_path}")  # Debug line
 
-    # === Step 2: Call Perplexity API ===
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are a research assistant. Search the web, analyze trends, "
-                "and deliver helpful insights relevant to the user's query."
-            )
-        },
-        {
-            "role": "user",
-            "content": prompt
-        }
-    ]
-
+    # === Step 2: Save the query ===
     try:
-        response = client.chat.completions.create(
-            model="sonar",
-            messages=messages
-        )
-        content = response.choices[0].message.content
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(f"# Project: {user_input}\n\n")
+            f.write(f"## Search Query:\n{prompt}\n\n")
+            f.flush()  # Ensure data is written to disk
+        print(f"Query saved successfully")  # Debug line
+    except Exception as e:
+        print(f"Error saving query: {e}")
+        return f"❌ Error saving query: {e}"
+
+    # === Step 3: Make API Call ===
+    try:
+        content = agent.run(prompt)
+        print(f"API call successful, content length: {len(str(content))}")  # Debug line
     except Exception as e:
         content = f"❌ Error while searching: {e}"
+        print(f"API call failed: {e}")  # Debug line
 
-    # === Step 3: Append result to the same .md file ===
-    with open(file_path, "a", encoding="utf-8") as f:
-        f.write(f"## Perplexity Response:\n{content}")
+    # === Step 4: Save result ===
+    try:
+        with open(file_path, "a", encoding="utf-8") as f:
+            f.write(f"## Perplexity Response:\n{content}\n")
+            f.flush()  # Ensure data is written to disk
+        print(f"Response saved successfully")  # Debug line
+    except Exception as e:
+        print(f"Error saving response: {e}")
+        return f"❌ Error saving response: {e}"
 
     return content
+
+
 
 def generate_prompt_for_slide_titles(project_name: str) -> str:
     prompt = f"""
@@ -189,6 +226,7 @@ Perform a deep-dive analysis with the following objectives:
 Be concise but insightful. Cite any relevant examples. Return findings suitable for slide content.
 """
     search_results = search_assistant(user_input, search_prompt)
+    print("The initial search results about the topic:- " + search_results)
     generated_slides = []
     slides_structured_json = []
 
