@@ -11,10 +11,10 @@ from openai import OpenAI
 from llms.search_llm import PerplexityResearchAgent
 
 # === ENVIRONMENT SETUP ===
-os.environ["AZURE_OPENAI_API_KEY"] = "b46942d9305c42d78df6078a465419ae"
+os.environ["AZURE_OPENAI_API_KEY"] = "---"
 os.environ["AZURE_OPENAI_API_VERSION"] = "2024-12-01-preview"
-os.environ["QDRANT_API_KEY"] = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.ota3xr4-xFLlm4d8P42hHHPAvFFb3K-SVPnSUx7ZRrE"
-os.environ["PERPLEXITY_API_KEY"] = "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"
+os.environ["QDRANT_API_KEY"] = "----"
+os.environ["PERPLEXITY_API_KEY"] = "-----"
 
 # Initializing Perplexity-compatible client
 agent = PerplexityResearchAgent(os.getenv("PERPLEXITY_API_KEY"))

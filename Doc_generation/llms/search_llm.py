@@ -37,7 +37,7 @@ class PerplexityResearchAgent:
             return response.choices[0].message.content
 
 # if __name__ == "__main__":
-#     api_key = "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"  # your Perplexity key
+#     api_key = "---"  # your Perplexity key
 #     agent = PerplexityResearchAgent(api_key)
 
 #     query = input("Give your qn:-")

@@ -5,7 +5,7 @@ endpoint = "https://qrizz-us.openai.azure.com/"
 client = AzureOpenAI(
     api_version="2024-12-01-preview",
     azure_endpoint = endpoint,
-    api_key="b46942d9305c42d78df6078a465419ae"  
+    api_key="--"  
 )
 
 def call_llm(prompt: str, deployment_name: str = "gpt-4o"):
